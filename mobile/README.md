@@ -1,51 +1,58 @@
-# QJSC Hospital Mobile App (Android + iOS)
+# QJSC Hospital Mobile (native Android/iOS)
 
-The Android/iOS client is a native Expo shell that opens the existing QJSC web frontend served by the hospital Windows PC. It reuses the same UI, accounts, role permissions, API and database rather than maintaining a second, incomplete hospital application.
+This folder contains a React Native / Expo application. The application UI is native React Native; it does not embed the PC website in a WebView. It connects to the existing QJSC API on the Windows hospital PC and uses the same server-side staff accounts and database.
 
-## What "offline" means
+## Connection setup
 
-The hospital workflow uses the private Wi-Fi/LAN only; internet access is not needed for normal on-site use after the mobile app is installed. The Windows PC, MongoDB, backend and frontend must be running and reachable. This is **not** an offline-first mobile database: when the PC or Wi-Fi is unavailable, live patient records and registration are unavailable until the connection returns. No patient is reported as saved unless the PC API confirms it.
+1. Keep the existing Windows PC backend, MongoDB database and backend `.env` configuration unchanged.
+2. Start the QJSC backend on the Windows PC and make it listen on the hospital's trusted private LAN interface.
+3. Allow the backend port through Windows Firewall for the **Private** network profile only. Do not expose the API to the public internet.
+4. Connect the Android phone and Windows PC to the same hospital Wi-Fi.
+5. Find the PC's IPv4 address with `ipconfig`, then enter it once in the app (example: `192.168.1.20`). The app stores the API address in AsyncStorage and keeps it after app restarts and staff sign-out. Changing the server address is available from Settings. Reinstalling the app or clearing its data removes this saved setting.
+6. Sign in with an existing QJSC staff account. The app does not create a separate staff account database.
 
-## LAN connection
+The connection test calls `/api/` and requires the QJSC service health response. The Android app uses the API at `http://PC-IP:8000/api` by default. If your server uses HTTPS or a different port, enter the complete base address including scheme and port.
 
-1. Keep the existing MongoDB database and the backend `.env` file. Back up the database before updating the Windows PC source.
-2. Run `scripts/enable-mobile-lan.bat` on the Windows PC with **Run as administrator**. It configures the backend listener and restricts Windows Firewall rules for ports 8000 (API) and 3000 (web app) to the local subnet on the Private network profile.
-3. Set the Windows Wi-Fi/Ethernet network profile to **Private**. Connect staff phones to the same trusted Wi-Fi (not a guest network with client isolation).
-4. Restart the backend and frontend. Confirm from a phone browser that `http://<PC-IP>:8000/api/` returns the QJSC service status and `http://<PC-IP>:3000` opens the web app.
-5. Run `ipconfig` on the PC and enter its Wi-Fi IPv4 address in the mobile app. Reserve that address in the router if possible so it does not change.
-6. Sign in using existing QJSC credentials. The app does not create a separate staff database or separate permissions.
+## Current native screens
 
-## Mobile consultation token printing
+- Dashboard overview and server-backed counts
+- Patient registration using the mobile registration endpoint and a unique request ID
+- Patient list and local search over the loaded patient records
+- Today's token list with Call and Done status actions
+- Doctor list for patient registration
+- Dressing charge entry and list
+- Expense entry and list
+- Native read views for doctors, prescriptions, inventory, finance summary, hospital finance, daily closing, low stock, reports, staff/users, audit logs and print queue (subject to the API endpoints and the signed-in account's permissions)
+- Connection settings and sign-out
 
-- A mobile consultation registration sends a stable idempotency key to `/api/mobile/patients`. The backend uses it to return the same registration/token after a retry instead of creating another token for the same request.
-- The backend stores one mobile print job per token in MongoDB.
-- On the Windows PC, run `scripts/open-hospital-silent-print.bat`, sign in as an admin/receptionist, and keep that dedicated Edge window open. It claims the print queue and prints using the existing receipt layout and the Windows default printer.
-- The `Mobile Print Queue` screen shows queued, processing, sent-to-printer, uncertain and failed jobs. An admin should check the physical printer before retrying an uncertain job, because the browser cannot confirm paper feed and retrying can produce a duplicate.
-- `sent_to_printer` means the browser invoked the Windows print path; it is not a hardware confirmation that paper came out.
+## Important feature-parity status
 
-## Build Android and iOS
+This is a native mobile client foundation, **not yet verified as full feature parity with every PC screen and workflow**. Several screens currently provide API-backed list views rather than complete PC-equivalent create/edit/delete workflows. Modules that require PC-specific forms, attachments, document previews, reports, printing, settings, approvals or role-specific actions still need to be mapped against the actual PC frontend and backend contracts and tested. Do not treat this build as a replacement for the PC software until that work and the device tests are complete.
 
-Requirements: Node.js compatible with the Expo SDK in `package.json`, an Expo account, and EAS CLI. From this folder:
+The Android app does not replace the PC print station. Printing must be performed by a supported PC-side print worker or by a native Android printing implementation after the exact receipt format and printer requirements are verified. This version does not claim that a token was physically printed.
+
+## Build
+
+Requires Node.js compatible with the Expo SDK in `package.json`, Android build tools (for local builds) or an Expo EAS account.
 
 ```bash
 npm install
-npx eas-cli login
-npx eas-cli build:configure
+npx expo config --type public
+npx expo prebuild --platform android --non-interactive
 ```
 
-`eas build:configure` must replace the placeholder EAS project ID in `app.json` with the ID for your Expo project. Then build:
+For an APK using EAS:
 
 ```bash
+npx eas-cli login
 npx eas-cli build --platform android --profile preview
-npx eas-cli build --platform ios --profile production
 ```
 
-The Android preview profile is configured for an APK. iOS device distribution requires Apple signing credentials; an Apple Developer account is generally needed for App Store/TestFlight distribution. These build files do not contain signing credentials or prebuilt APK/IPA files.
+The preview profile produces an installable APK. Production builds require valid signing configuration. The placeholder EAS project ID in `app.json` must be replaced with the ID of your Expo project before EAS builds.
 
-## Feature notes and limits
+## Network and privacy
 
-- The app loads the existing web modules from the PC, so changes to QJSC modules remain in one frontend codebase.
-- Mobile browser/WebView support can differ for speech recognition, camera/document capture, file uploads/downloads and external payment/printing workflows. These capabilities must be tested on the actual Android and iOS devices; manual workflows remain available where a WebView API is unavailable.
-- iOS asks the user to allow Local Network access. Choose **Allow** so the app can connect to the hospital PC.
-- Local HTTP is limited to trusted private LAN use. Do not port-forward ports 3000 or 8000 to the public internet. Use HTTPS and a properly secured remote-access design for access outside the hospital Wi-Fi.
-- WebView authentication uses the QJSC frontend's browser storage on that device. Do not share staff accounts; log out on shared devices and use strong staff passwords.
+- Local HTTP is intended only for a trusted hospital LAN. Never port-forward the API port to the internet.
+- For remote access, use a properly secured VPN/HTTPS gateway and server-side authentication; do not expose the Windows PC API directly.
+- Patient records remain on the QJSC server. The mobile app stores only the configured server address locally; authentication tokens remain in app memory and are cleared when signing out.
+- Android/iOS device compatibility, permissions, API response contracts and all clinical/financial workflows must be tested before deployment.
