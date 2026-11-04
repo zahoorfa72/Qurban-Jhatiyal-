@@ -1,0 +1,51 @@
+{
+  "expo": {
+    "name": "QJSC Hospital",
+    "slug": "qjsc-hospital",
+    "scheme": "qjsc",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "pk.qjsc.hospital",
+      "infoPlist": {
+        "NSLocalNetworkUsageDescription": "QJSC uses your hospital private Wi-Fi to reach the Windows hospital PC.",
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true
+        },
+        "NSMicrophoneUsageDescription": "QJSC voice registration uses the microphone for patient name, age and doctor dictation when supported by the device browser.",
+        "NSCameraUsageDescription": "QJSC uses the camera only when a hospital workflow requests document or image capture."
+      },
+      "config": {
+        "usesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "package": "pk.qjsc.hospital",
+      "permissions": [
+        "INTERNET",
+        "ACCESS_NETWORK_STATE",
+        "RECORD_AUDIO",
+        "CAMERA"
+      ],
+      "usesCleartextTraffic": true
+    },
+    "plugins": [
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "REPLACE_WITH_EAS_PROJECT_ID"
+      }
+    }
+  }
+}
