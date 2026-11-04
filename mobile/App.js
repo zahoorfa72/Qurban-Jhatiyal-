@@ -1,155 +1,90 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  ActivityIndicator, Alert, BackHandler, KeyboardAvoidingView, Linking, Platform,
-  Pressable, StatusBar, StyleSheet, Text, TextInput, View,
-} from 'react-native';
+import React,{useCallback,useEffect,useMemo,useState} from 'react';
+import {ActivityIndicator,Alert,FlatList,KeyboardAvoidingView,Platform,Pressable,RefreshControl,ScrollView,StatusBar,StyleSheet,Text,TextInput,View} from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { WebView } from 'react-native-webview';
+import {SafeAreaView} from 'react-native-safe-area-context';
 
-const STORAGE_KEY = 'qjsc_mobile_server_url';
-function normalizeHost(value) {
-  let raw = String(value || '').trim();
-  if (!raw) throw new Error('Enter the hospital PC address.');
-  if (!/^https?:\/\//i.test(raw)) raw = `http://${raw}`;
-  const u = new URL(raw);
-  if (!['http:', 'https:'].includes(u.protocol)) throw new Error('Use the hospital PC IP address, for example 192.168.1.20.');
-  if (['localhost', '127.0.0.1', '::1'].includes(u.hostname)) throw new Error('Enter the Windows hospital PC LAN IPv4 address, not localhost.');
-  const hostname = u.hostname;
-  return `http://${hostname}:8000`;
+const KEY='qjsc_native_config_v1';
+const T={green:'#0A4936',deep:'#0A3B2E',gold:'#C9A45C',bg:'#F3F7F4',card:'#FFFFFF',ink:'#17231E',muted:'#68766F',line:'#DCE6DF',pale:'#E8F1EB',red:'#B83A3A'};
+const NAV=[
+ ['home','Dashboard'],['register','Register patient'],['patients','Patients'],['tokens','Tokens'],
+ ['doctors','Doctors'],['prescriptions','Prescriptions'],['dressing','Dressing'],['inventory','Inventory'],
+ ['expenses','Expenses'],['finance','Finance summary'],['hospitalFinance','Hospital finance'],
+ ['dailyClosing','Daily closing'],['lowStock','Low stock'],['reports','Reports'],['users','Staff & users'],
+ ['audit','Audit logs'],['printQueue','Print queue'],['settings','Settings']
+];
+const PATH={
+ doctors:'/doctors',prescriptions:'/prescriptions',dressing:'/dressing-charges',inventory:'/inventory',
+ expenses:'/expenses',finance:'/finance/summary',hospitalFinance:'/hospital-finance/entries',
+ dailyClosing:'/reports/daily-closing',lowStock:'/inventory/low-stock',reports:'/finance/summary',
+ users:'/users',audit:'/audit-logs',printQueue:'/mobile/print-queue/recent'
+};
+const dateNow=()=>{const d=new Date();return [d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');};
+const rid=()=> 'android-'+Date.now()+'-'+Math.random().toString(36).slice(2,9);
+const arr=x=>Array.isArray(x)?x:(x?.items||x?.rows||x?.data||x?.results||[]);
+function hostUrl(value){
+ let v=String(value||'').trim(); if(!v)throw Error('Enter the hospital PC IP address.');
+ if(!/^https?:\/\//i.test(v))v='http://'+v;
+ const u=new URL(v); if(!['http:','https:'].includes(u.protocol))throw Error('Use an HTTP or HTTPS address.');
+ if(['localhost','127.0.0.1','::1'].includes(u.hostname))throw Error('Use the Windows PC LAN IP, not localhost.');
+ return u.origin;
 }
-function getWebUrl(apiRoot) {
-  const u = new URL(apiRoot);
-  return `http://${u.hostname}:3000`;
+export default function App(){
+ const [cfg,setCfg]=useState(null),[draftHost,setDraftHost]=useState(''),[token,setToken]=useState(''),[user,setUser]=useState(null);
+ const [email,setEmail]=useState(''),[password,setPassword]=useState(''),[screen,setScreen]=useState('home'),[busy,setBusy]=useState(false),[loading,setLoading]=useState(true),[refreshing,setRefreshing]=useState(false),[error,setError]=useState('');
+ const [stats,setStats]=useState(null),[doctors,setDoctors]=useState([]),[patients,setPatients]=useState([]),[tokens,setTokens]=useState([]),[rows,setRows]=useState([]),[search,setSearch]=useState('');
+ const [patient,setPatient]=useState({name:'',phone:'',age:'',gender:'',doctor_id:'',shift:'Morning',notes:'',paid:'true',discount:'0'});
+ const [expense,setExpense]=useState({category:'',description:'',amount:'',date:dateNow()});
+ const [dressing,setDressing]=useState({patient_name:'',phone:'',amount:'',notes:'',date:dateNow()});
+ const apiRoot=cfg?.apiRoot||'';
+ const api=useCallback(async(path,options={})=>{
+  if(!apiRoot)throw Error('Connect to the hospital PC first.');
+  const headers={Accept:'application/json','Content-Type':'application/json',...(options.headers||{})};
+  if(token)headers.Authorization='Bearer '+token;
+  const res=await fetch(apiRoot+path,{...options,headers});
+  const raw=await res.text();let data={};try{data=raw?JSON.parse(raw):{};}catch{data={detail:raw};}
+  if(!res.ok)throw Error(data.detail||data.message||('Request failed ('+res.status+')'));
+  return data;
+ },[apiRoot,token]);
+ useEffect(()=>{(async()=>{try{const saved=await AsyncStorage.getItem(KEY);if(saved){const c=JSON.parse(saved);setCfg(c);setDraftHost(c.apiRoot.replace(/\/api$/,''));}}catch(e){setError('Saved connection settings could not be read.');}finally{setLoading(false);}})();},[]);
+ const connect=async()=>{try{setBusy(true);const root=hostUrl(draftHost)+'/api';const r=await fetch(root+'/',{headers:{Accept:'application/json'}});if(!r.ok)throw Error('Hospital API returned HTTP '+r.status);const j=await r.json();if(j.status!=='ok')throw Error('This is not a recognised QJSC API server.');const c={apiRoot:root};await AsyncStorage.setItem(KEY,JSON.stringify(c));setCfg(c);setError('');}catch(e){Alert.alert('Connection failed',e.message+' Check same Wi-Fi and that the PC backend is running.');}finally{setBusy(false);}};
+ const login=async()=>{try{setBusy(true);const r=await fetch(apiRoot+'/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email.trim(),password})});const d=await r.json();if(!r.ok)throw Error(d.detail||'Login failed');const t=d.access_token||d.token;if(!t)throw Error('Login response did not include an access token.');setToken(t);setUser(d.user||d);setPassword('');}catch(e){Alert.alert('Sign in failed',e.message);}finally{setBusy(false);}};
+ const load=useCallback(async()=>{
+  if(!token)return;setError('');
+  const jobs=[['stats','/stats/overview'],['doctors','/doctors'],['patients','/patients'],['tokens','/tokens/today']];
+  const results=await Promise.all(jobs.map(async([k,p])=>{try{return [k,await api(p),null];}catch(e){return [k,null,e.message];}}));
+  for(const [k,v,msg] of results){if(v!==null){if(k==='stats')setStats(v);if(k==='doctors')setDoctors(arr(v));if(k==='patients')setPatients(arr(v));if(k==='tokens')setTokens(arr(v));}else if(k==='stats')setError(msg);}
+ },[api,token]);
+ useEffect(()=>{if(token)load();},[token,load]);
+ const loadModule=useCallback(async(id)=>{const p=PATH[id];if(!p)return;try{setBusy(true);setRows(arr(await api(p)));}catch(e){setRows([]);setError(e.message);}finally{setBusy(false);}},[api]);
+ useEffect(()=>{if(token&&PATH[screen])loadModule(screen);},[token,screen,loadModule]);
+ const refresh=async()=>{setRefreshing(true);if(screen==='home'||screen==='patients'||screen==='tokens')await load();else await loadModule(screen);setRefreshing(false);};
+ const createPatient=async()=>{if(!patient.name.trim())return Alert.alert('Required','Enter patient name.');try{setBusy(true);const body={...patient,age:patient.age?Number(patient.age):null,discount:Number(patient.discount||0),paid:patient.paid==='true',request_id:rid()};const d=await api('/mobile/patients',{method:'POST',body:JSON.stringify(body)});Alert.alert('Registration saved', 'Patient/token registration was accepted by the hospital server. Token: '+(d.token_number??d.token?.token_number??'created'));setPatient({name:'',phone:'',age:'',gender:'',doctor_id:'',shift:'Morning',notes:'',paid:'true',discount:'0'});setScreen('tokens');await load();}catch(e){Alert.alert('Registration failed',e.message);}finally{setBusy(false);}};
+ const updateToken=async(id,status)=>{try{await api('/tokens/'+id+'/status',{method:'PATCH',body:JSON.stringify({status})});await load();}catch(e){Alert.alert('Could not update token',e.message);}};
+ const addExpense=async()=>{try{if(!expense.amount||Number(expense.amount)<=0)throw Error('Enter a valid amount.');await api('/expenses',{method:'POST',body:JSON.stringify({...expense,amount:Number(expense.amount)})});setExpense({category:'',description:'',amount:'',date:dateNow()});Alert.alert('Saved','Expense added.');await loadModule('expenses');}catch(e){Alert.alert('Could not save expense',e.message);}};
+ const addDressing=async()=>{try{if(!dressing.amount||Number(dressing.amount)<=0)throw Error('Enter a valid amount.');await api('/dressing-charges',{method:'POST',body:JSON.stringify({...dressing,amount:Number(dressing.amount)})});setDressing({patient_name:'',phone:'',amount:'',notes:'',date:dateNow()});Alert.alert('Saved','Dressing charge added.');await loadModule('dressing');}catch(e){Alert.alert('Could not save dressing charge',e.message);}};
+ const logout=()=>Alert.alert('Sign out','Sign out of this staff account?', [{text:'Cancel',style:'cancel'},{text:'Sign out',style:'destructive',onPress:()=>{setToken('');setUser(null);setScreen('home');setRows([]);}}]);
+ const changeServer=()=>Alert.alert('Change hospital PC','This clears only the saved server address. Hospital records are not deleted.',[{text:'Cancel',style:'cancel'},{text:'Change',style:'destructive',onPress:async()=>{await AsyncStorage.removeItem(KEY);setCfg(null);setToken('');setUser(null);setDraftHost('');}}]);
+ if(loading)return <SafeAreaView style={s.center}><ActivityIndicator size="large" color={T.green}/><Text style={s.muted}>Opening QJSC…</Text></SafeAreaView>;
+ if(!cfg)return <SafeAreaView style={s.safe}><StatusBar barStyle="dark-content"/><KeyboardAvoidingView behavior={Platform.OS==='ios'?'padding':undefined} style={s.login}><Brand/><Text style={s.h1}>Connect hospital PC</Text><Text style={s.muted}>Enter the Windows PC IPv4 address once. It stays saved after restart and staff sign-out.</Text><Field label="Hospital PC IP address" value={draftHost} onChangeText={setDraftHost} placeholder="192.168.1.20"/><Text style={s.hint}>Phone and PC must be on the same trusted Wi-Fi. Find the PC address with ipconfig. Do not enter localhost.</Text>{error?<Text style={s.error}>{error}</Text>:null}<Primary title="Test & save connection" onPress={connect} busy={busy}/></KeyboardAvoidingView></SafeAreaView>;
+ if(!token)return <SafeAreaView style={s.safe}><StatusBar barStyle="dark-content"/><KeyboardAvoidingView behavior={Platform.OS==='ios'?'padding':undefined} style={s.login}><Brand/><Text style={s.h1}>Staff sign in</Text><Text style={s.muted}>Use your existing QJSC staff account.</Text><Field label="Email" value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address"/><Field label="Password" value={password} onChangeText={setPassword} secureTextEntry/><Primary title="Sign in" onPress={login} busy={busy}/><Pressable onPress={changeServer}><Text style={s.link}>Change hospital PC</Text></Pressable>{error?<Text style={s.error}>{error}</Text>:null}</KeyboardAvoidingView></SafeAreaView>;
+ const title=NAV.find(x=>x[0]===screen)?.[1]||'Hospital modules';
+ return <SafeAreaView style={s.safe}><StatusBar barStyle="dark-content"/><View style={s.header}><View style={{flex:1}}><Text style={s.brandSmall}>QJSC</Text><Text style={s.headerTitle}>{title}</Text></View><Pressable onPress={logout} style={s.user}><Text style={s.userText}>{String(user?.name||user?.email||'U').slice(0,1).toUpperCase()}</Text></Pressable></View>
+ <ScrollView contentContainerStyle={s.body} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh}/>}>
+ {screen==='home'&&<><View style={s.welcome}><Text style={s.welcomeTitle}>Hospital dashboard</Text><Text style={s.welcomeSub}>Connected to the hospital PC database</Text></View><View style={s.grid}>{[['Patients',stats?.total_patients??patients.length],['Today tokens',stats?.today_tokens??tokens.length],['Doctors',stats?.total_doctors??doctors.length],['Inventory items',stats?.inventory_items??'—']].map(([a,b])=><View key={a} style={s.stat}><Text style={s.muted}>{a}</Text><Text style={s.statValue}>{String(b)}</Text></View>)}</View><Text style={s.section}>Quick access</Text><View style={s.grid}>{NAV.slice(1,8).map(([id,l])=><Pressable key={id} onPress={()=>setScreen(id)} style={s.tile}><Text style={s.tileText}>{l}</Text></Pressable>)}</View></>}
+ {screen==='register'&&<Card title="New patient registration"><Field label="Patient name *" value={patient.name} onChangeText={v=>setPatient(p=>({...p,name:v}))}/><Field label="Phone" value={patient.phone} onChangeText={v=>setPatient(p=>({...p,phone:v}))} keyboardType="phone-pad"/><Field label="Age" value={patient.age} onChangeText={v=>setPatient(p=>({...p,age:v}))} keyboardType="numeric"/><Text style={s.label}>Gender</Text><Choices value={patient.gender} options={['Male','Female','Other']} onChange={v=>setPatient(p=>({...p,gender:v}))}/><Text style={s.label}>Doctor</Text><Choices value={patient.doctor_id} options={doctors.map(d=>[String(d.id||d._id),d.name||'Doctor'])} onChange={v=>setPatient(p=>({...p,doctor_id:v}))}/><Text style={s.label}>Shift</Text><Choices value={patient.shift} options={['Morning','Evening','Night']} onChange={v=>setPatient(p=>({...p,shift:v}))}/><Field label="Discount" value={patient.discount} onChangeText={v=>setPatient(p=>({...p,discount:v}))} keyboardType="decimal-pad"/><Field label="Notes" value={patient.notes} onChangeText={v=>setPatient(p=>({...p,notes:v}))}/><Primary title="Register patient & create token" onPress={createPatient} busy={busy}/></Card>}
+ {screen==='patients'&&<Card title="Patient records"><Field label="Search patients" value={search} onChangeText={setSearch} placeholder="Name, phone or patient ID"/>{patients.filter(p=>JSON.stringify(p).toLowerCase().includes(search.toLowerCase())).slice(0,100).map((p,i)=><Row key={p.id||p._id||i} title={p.name||p.patient_name||'Patient'} detail={[p.phone,p.age,p.gender].filter(Boolean).join(' · ')}/>)}</Card>}
+ {screen==='tokens'&&<Card title="Today's tokens">{tokens.map((t,i)=><View key={t.id||t._id||i} style={s.row}><View style={s.token}><Text style={s.tokenText}>{t.token_number??'—'}</Text></View><View style={{flex:1}}><Text style={s.rowTitle}>{t.patient_name||t.name||'Patient'}</Text><Text style={s.muted}>{t.doctor_name||'Doctor'} · {t.status||'waiting'}</Text></View><Pressable onPress={()=>updateToken(t.id||t._id,'serving')}><Text style={s.action}>Call</Text></Pressable><Pressable onPress={()=>updateToken(t.id||t._id,'done')}><Text style={s.action}>Done</Text></Pressable></View>)}</Card>}
+ {screen==='expenses'&&<Card title="Add expense"><Field label="Category" value={expense.category} onChangeText={v=>setExpense(p=>({...p,category:v}))}/><Field label="Description" value={expense.description} onChangeText={v=>setExpense(p=>({...p,description:v}))}/><Field label="Amount" value={expense.amount} onChangeText={v=>setExpense(p=>({...p,amount:v}))} keyboardType="decimal-pad"/><Field label="Date (YYYY-MM-DD)" value={expense.date} onChangeText={v=>setExpense(p=>({...p,date:v}))}/><Primary title="Save expense" onPress={addExpense} busy={busy}/></Card>}
+ {screen==='dressing'&&<Card title="Add dressing charge"><Field label="Patient name" value={dressing.patient_name} onChangeText={v=>setDressing(p=>({...p,patient_name:v}))}/><Field label="Phone" value={dressing.phone} onChangeText={v=>setDressing(p=>({...p,phone:v}))}/><Field label="Amount" value={dressing.amount} onChangeText={v=>setDressing(p=>({...p,amount:v}))} keyboardType="decimal-pad"/><Field label="Date (YYYY-MM-DD)" value={dressing.date} onChangeText={v=>setDressing(p=>({...p,date:v}))}/><Field label="Notes" value={dressing.notes} onChangeText={v=>setDressing(p=>({...p,notes:v}))}/><Primary title="Save dressing charge" onPress={addDressing} busy={busy}/></Card>}
+ {PATH[screen]&&screen!=='expenses'&&screen!=='dressing'&&<Card title={title}><Text style={s.muted}>Live records from the hospital server. Your account permissions are enforced by the server.</Text>{busy?<ActivityIndicator color={T.green}/>:rows.length?rows.slice(0,150).map((r,i)=><Row key={r.id||r._id||i} title={r.name||r.title||r.patient_name||r.category||r.description||('Record '+(i+1))} detail={Object.entries(r).filter(([k,v])=>!['_id','password_hash','hashed_password','token'].includes(k)&&['string','number','boolean'].includes(typeof v)).slice(0,4).map(([k,v])=>k.replace(/_/g,' ')+': '+String(v)).join(' · ')}/>):<Text style={s.empty}>No records returned, or this account has no access to this module.</Text>}</Card>}
+ {screen==='settings'&&<Card title="Connection settings"><Text style={s.muted}>Saved hospital API: {apiRoot}</Text><Primary title="Change hospital PC address" onPress={changeServer}/><Primary title="Sign out" onPress={logout}/></Card>}
+ {error?<Text style={s.error}>{error}</Text>:null}
+ </ScrollView><View style={s.nav}>{[['home','Home'],['register','Register'],['patients','Patients'],['tokens','Tokens'],['more','More']].map(([id,l])=><Pressable key={id} onPress={()=>setScreen(id==='more'?'settings':id)} style={s.navItem}><Text style={[s.navLabel,(screen===id||id==='more'&&PATH[screen])&&{color:T.green}]}>{l}</Text></Pressable>)}</View></SafeAreaView>;
 }
-
-export default function App() {
-  const [serverDraft, setServerDraft] = useState('');
-  const [apiRoot, setApiRoot] = useState('');
-  const [webRoot, setWebRoot] = useState('');
-  const [checking, setChecking] = useState(false);
-  const [connected, setConnected] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [webError, setWebError] = useState('');
-  const [webKey, setWebKey] = useState(0);
-  const [canGoBack, setCanGoBack] = useState(false);
-  const webRef = React.useRef(null);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const saved = await AsyncStorage.getItem(STORAGE_KEY);
-        if (saved) {
-          setServerDraft(saved);
-          const api = normalizeHost(saved);
-          setApiRoot(api);
-          setWebRoot(getWebUrl(api));
-          setConnected(true);
-        }
-      } catch (_e) {}
-      finally { setLoading(false); }
-    })();
-  }, []);
-
-  const testAndConnect = useCallback(async () => {
-    let api;
-    try { api = normalizeHost(serverDraft); }
-    catch (e) { Alert.alert('Hospital PC address', e.message); return; }
-    setChecking(true);
-    setConnected(false);
-    try {
-      const response = await fetch(`${api}/api/`, { method: 'GET' });
-      if (!response.ok) throw new Error(`Hospital API responded with HTTP ${response.status}.`);
-      const result = await response.json();
-      if (result?.status !== 'ok') throw new Error('This address did not respond as the QJSC hospital server.');
-      const web = getWebUrl(api);
-      // Check that the web app is reachable too, not merely the API.
-      const page = await fetch(web, { method: 'GET' });
-      if (!page.ok) throw new Error(`QJSC web app returned HTTP ${page.status}. Start the frontend on the PC.`);
-      await AsyncStorage.setItem(STORAGE_KEY, api);
-      setApiRoot(api); setWebRoot(web); setConnected(true); setWebError(''); setWebKey(x => x + 1);
-    } catch (e) {
-      Alert.alert('Cannot connect to QJSC', `${e.message || 'Connection failed'}\n\nCheck that the phone and PC use the same Wi-Fi, and that the QJSC backend and frontend are running.`);
-    } finally { setChecking(false); }
-  }, [serverDraft]);
-
-  useEffect(() => {
-    if (!connected || !webRoot) return undefined;
-    const back = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (canGoBack && webRef.current) { webRef.current.goBack(); return true; }
-      return false;
-    });
-    return () => back.remove();
-  }, [connected, canGoBack, webRoot]);
-
-  const allowedHost = useMemo(() => { try { return new URL(webRoot).hostname; } catch { return ''; } }, [webRoot]);
-  if (loading) return <SafeAreaView style={s.center}><ActivityIndicator size="large" color="#0A4936"/><Text style={s.muted}>Opening QJSC…</Text></SafeAreaView>;
-
-  if (!connected || !webRoot) return <SafeAreaView style={s.safe}>
-    <StatusBar barStyle="dark-content" backgroundColor="#F4F7F5" />
-    <KeyboardAvoidingView style={s.login} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <View style={s.logo}><Text style={s.logoText}>QJSC</Text></View>
-      <Text style={s.title}>Qurban Jhatiyal Surgical Complex</Text>
-      <Text style={s.subtitle}>Mobile staff application » Full hospital software</Text>
-      <View style={s.card}>
-        <Text style={s.heading}>Connect to hospital PC</Text>
-        <Text style={s.help}>Connect this phone to the same Wi-Fi as the hospital Windows PC. Internet is not required.</Text>
-        <Text style={s.label}>Hospital PC IPv4 address</Text>
-        <TextInput value={serverDraft} onChangeText={setServerDraft} placeholder="192.168.1.20" placeholderTextColor="#89968F" autoCapitalize="none" autoCorrect={false} keyboardType="url" style={s.input}/>
-        <Text style={s.help}>Find the address on the PC by opening Command Prompt and running ipconfig. Enter only the IPv4 address, or the address with :8000.</Text>
-        <Pressable onPress={testAndConnect} disabled={checking || !serverDraft.trim()} style={[s.button, (checking || !serverDraft.trim()) && s.disabled]}>
-          {checking ? <ActivityIndicator color="#fff"/> : <Text style={s.buttonText}>Test connection & open QJSC</Text>}
-        </Pressable>
-      </View>
-      <Text style={s.footer}>Patient information remains in the hospital PC database. Mobile registration sends the token to the PC's receipt print queue.</Text>
-    </KeyboardAvoidingView>
-  </SafeAreaView>;
-
-  return <SafeAreaView style={s.webSafe}>
-    <StatusBar barStyle="dark-content" backgroundColor="#F4F7F5" />
-    <View style={s.toolbar}>
-      <View style={{flex:1}}><Text style={s.toolbarBrand}>QJSC</Text><Text style={s.toolbarSub}>Hospital local network</Text></View>
-      <View style={s.toolbarStatus}><View style={s.dot}/><Text style={s.toolbarStatusText}>Connected</Text></View>
-      <Pressable onPress={() => { Alert.alert('Change hospital server', 'Disconnect this device from the current QJSC server?', [{text:'Cancel',style:'cancel'},{text:'Change',style:'destructive',onPress:async()=>{await AsyncStorage.removeItem(STORAGE_KEY);setConnected(false);setApiRoot('');setWebRoot('');}}]); }} style={s.changeButton}><Text style={s.changeText}>Change</Text></Pressable>
-    </View>
-    {webError ? <View style={s.errorBox}><Text style={s.errorText}>{webError}</Text><Pressable onPress={()=>setWebKey(x=>x+1)}><Text style={s.retry}>Retry</Text></Pressable></View> : null}
-    <WebView
-      key={webKey}
-      ref={webRef}
-      source={{ uri: webRoot }}
-      originWhitelist={['http://*','https://*']}
-      javaScriptEnabled
-      domStorageEnabled
-      sharedCookiesEnabled
-      thirdPartyCookiesEnabled
-      cacheEnabled
-      allowsBackForwardNavigationGestures
-      setSupportMultipleWindows={false}
-      mixedContentMode="compatibility"
-      javaScriptCanOpenWindowsAutomatically
-      startInLoadingState
-      renderLoading={()=><View style={s.webLoading}><ActivityIndicator size="large" color="#0A4936"/><Text style={s.muted}>Loading QJSC…</Text></View>}
-      onNavigationStateChange={state=>setCanGoBack(Boolean(state.canGoBack))}
-      onError={event=>setWebError(event.nativeEvent?.description || 'Could not load QJSC. Check that the PC frontend is running.')}
-      onHttpError={event=>{if(event.nativeEvent?.statusCode>=500)setWebError(`QJSC returned HTTP ${event.nativeEvent.statusCode}.`);}}
-      onShouldStartLoadWithRequest={request=>{
-        const url=request.url || '';
-        if (url.startsWith('about:') || url.startsWith('data:') || url.startsWith('blob:')) return true;
-        try {
-          const u=new URL(url);
-          if (u.hostname===allowedHost && ['http:','https:'].includes(u.protocol)) return true;
-          if (u.protocol==='mailto:' || u.protocol==='tel:') { Linking.openURL(url).catch(()=>{}); return false; }
-          if (u.protocol==='https:') { Linking.openURL(url).catch(()=>{}); return false; }
-          return false;
-        } catch { return false; }
-      }}
-    />
-  </SafeAreaView>;
-}
-
-const s=StyleSheet.create({
-  safe:{flex:1,backgroundColor:'#F4F7F5'}, webSafe:{flex:1,backgroundColor:'#fff'}, center:{flex:1,justifyContent:'center',alignItems:'center',gap:12,backgroundColor:'#F4F7F5'},
-  login:{flex:1,justifyContent:'center',padding:22,gap:16},logo:{width:72,height:72,borderRadius:20,alignSelf:'center',backgroundColor:'#0A3B2E',justifyContent:'center',alignItems:'center'},logoText:{color:'#fff',fontSize:22,fontWeight:'900',letterSpacing:1.5},
-  title:{textAlign:'center',color:'#0A3B2E',fontSize:22,fontWeight:'900'},subtitle:{textAlign:'center',color:'#64736B',fontSize:12,marginTop:-12},card:{backgroundColor:'#fff',borderRadius:16,borderWidth:1,borderColor:'#DDE6E0',padding:18,gap:12},heading:{fontSize:18,fontWeight:'900',color:'#17231E'},help:{fontSize:12,lineHeight:18,color:'#64736B'},label:{fontSize:12,fontWeight:'800',color:'#17231E'},input:{height:50,borderRadius:10,borderWidth:1,borderColor:'#CFDCD3',paddingHorizontal:13,fontSize:16,color:'#17231E'},button:{minHeight:48,backgroundColor:'#0A4936',borderRadius:10,justifyContent:'center',alignItems:'center',padding:12},disabled:{opacity:.5},buttonText:{color:'#fff',fontSize:14,fontWeight:'900'},footer:{fontSize:10,lineHeight:16,textAlign:'center',color:'#8A9791'},muted:{fontSize:12,color:'#64736B'},
-  toolbar:{height:54,flexDirection:'row',alignItems:'center',paddingHorizontal:12,gap:12,backgroundColor:'#F4F7F5',borderBottomWidth:1,borderBottomColor:'#DDE6E0'},toolbarBrand:{fontSize:17,fontWeight:'900',color:'#0A3B2E'},toolbarSub:{fontSize:9,color:'#64736B'},toolbarStatus:{flexDirection:'row',alignItems:'center',gap:5},dot:{width:7,height:7,borderRadius:8,backgroundColor:'#239B67'},toolbarStatusText:{fontSize:10,color:'#0A4936',fontWeight:'800'},changeButton:{paddingHorizontal:10,paddingVertical:7,borderRadius:7,backgroundColor:'#EAF2ED'},changeText:{fontSize:10,color:'#0A4936',fontWeight:'900'},webLoading:{...StyleSheet.absoluteFillObject,backgroundColor:'#fff',justifyContent:'center',alignItems:'center',gap:10,zIndex:2},errorBox:{padding:10,backgroundColor:'#FCECEC',flexDirection:'row',justifyContent:'space-between',alignItems:'center'},errorText:{fontSize:11,color:'#9A3030',flex:1},retry:{fontSize:12,color:'#0A4936',fontWeight:'900'},
-});
+function Brand(){return <View style={s.brand}><View style={s.logo}><Text style={s.logoText}>QJSC</Text></View><Text style={s.brandName}>Qurban Jhatiyal Surgical Complex</Text><Text style={s.brandCaption}>HOSPITAL MANAGEMENT</Text></View>}
+function Field({label,value,onChangeText,placeholder,keyboardType,secureTextEntry,autoCapitalize}){return <View style={s.field}><Text style={s.label}>{label}</Text><TextInput value={String(value??'')} onChangeText={onChangeText} placeholder={placeholder||''} keyboardType={keyboardType||'default'} secureTextEntry={secureTextEntry} autoCapitalize={autoCapitalize||'sentences'} style={s.input}/></View>}
+function Primary({title,onPress,busy}){return <Pressable onPress={onPress} disabled={busy} style={[s.primary,busy&&{opacity:.6}]}>{busy?<ActivityIndicator color="#fff"/>:<Text style={s.primaryText}>{title}</Text>}</Pressable>}
+function Card({title,children}){return <View style={s.card}><Text style={s.cardTitle}>{title}</Text>{children}</View>}
+function Row({title,detail}){return <View style={s.row}><View style={{flex:1}}><Text style={s.rowTitle}>{String(title)}</Text>{detail?<Text style={s.muted}>{String(detail)}</Text>:null}</View></View>}
+function Choices({options,value,onChange}){return <View style={s.choices}>{options.map(x=>{const v=Array.isArray(x)?x[0]:x,l=Array.isArray(x)?x[1]:x;return <Pressable key={v} onPress={()=>onChange(v)} style={[s.choice,value===v&&s.choiceOn]}><Text style={{color:value===v?T.green:T.muted,fontWeight:'700',fontSize:12}}>{l}</Text></Pressable>;})}</View>}
+const s=StyleSheet.create({safe:{flex:1,backgroundColor:T.bg},center:{flex:1,alignItems:'center',justifyContent:'center',gap:12,backgroundColor:T.bg},login:{flex:1,justifyContent:'center',padding:24,gap:13},brand:{alignItems:'center',gap:7,marginBottom:20},logo:{width:76,height:76,borderRadius:22,backgroundColor:T.deep,borderWidth:2,borderColor:T.gold,alignItems:'center',justifyContent:'center'},logoText:{fontSize:23,fontWeight:'900',color:'#fff',letterSpacing:2},brandName:{fontSize:18,fontWeight:'900',color:T.deep,textAlign:'center'},brandCaption:{fontSize:10,fontWeight:'800',letterSpacing:2,color:T.gold},h1:{fontSize:23,fontWeight:'900',color:T.ink},muted:{fontSize:12,color:T.muted,lineHeight:18},hint:{fontSize:11,color:T.muted,lineHeight:17},field:{gap:5,marginVertical:5},label:{fontSize:12,fontWeight:'800',color:T.ink,marginTop:5},input:{minHeight:47,borderWidth:1,borderColor:T.line,borderRadius:10,backgroundColor:'#fff',paddingHorizontal:12,color:T.ink,fontSize:14},primary:{minHeight:47,backgroundColor:T.green,borderRadius:10,alignItems:'center',justifyContent:'center',paddingHorizontal:12,marginTop:9},primaryText:{color:'#fff',fontSize:13,fontWeight:'900'},link:{textAlign:'center',color:T.green,fontWeight:'800',padding:10},header:{height:62,flexDirection:'row',alignItems:'center',paddingHorizontal:15,borderBottomWidth:1,borderColor:T.line},brandSmall:{fontSize:10,fontWeight:'900',letterSpacing:2,color:T.gold},headerTitle:{fontSize:18,fontWeight:'900',color:T.deep},user:{width:36,height:36,borderRadius:18,backgroundColor:T.pale,alignItems:'center',justifyContent:'center'},userText:{color:T.green,fontWeight:'900'},body:{padding:14,paddingBottom:25,gap:12},welcome:{backgroundColor:T.deep,borderRadius:15,padding:17},welcomeTitle:{color:'#fff',fontSize:19,fontWeight:'900'},welcomeSub:{color:'#D4E2D9',fontSize:11,marginTop:5},grid:{flexDirection:'row',flexWrap:'wrap',gap:9},stat:{width:'48%',flexGrow:1,backgroundColor:T.card,borderWidth:1,borderColor:T.line,borderRadius:12,padding:13},statValue:{fontSize:22,fontWeight:'900',color:T.deep,marginTop:5},section:{fontSize:15,fontWeight:'900',color:T.ink},tile:{width:'48%',flexGrow:1,minHeight:55,backgroundColor:T.card,borderWidth:1,borderColor:T.line,borderRadius:11,justifyContent:'center',padding:12},tileText:{fontSize:12,fontWeight:'800',color:T.green},card:{backgroundColor:T.card,borderWidth:1,borderColor:T.line,borderRadius:13,padding:14,gap:8},cardTitle:{fontSize:16,fontWeight:'900',color:T.deep,marginBottom:5},choices:{flexDirection:'row',flexWrap:'wrap',gap:7,marginVertical:6},choice:{borderWidth:1,borderColor:T.line,borderRadius:8,paddingVertical:9,paddingHorizontal:11},choiceOn:{backgroundColor:T.pale,borderColor:T.green},row:{flexDirection:'row',alignItems:'center',gap:10,paddingVertical:11,borderBottomWidth:1,borderColor:'#EEF2EF'},rowTitle:{fontSize:13,fontWeight:'800',color:T.ink},token:{width:38,height:38,borderRadius:9,backgroundColor:T.pale,alignItems:'center',justifyContent:'center'},tokenText:{fontSize:14,fontWeight:'900',color:T.green},action:{fontSize:11,fontWeight:'900',color:T.green,padding:4},empty:{padding:18,textAlign:'center',color:T.muted,fontSize:12},error:{padding:10,borderRadius:8,backgroundColor:'#FCEEEE',color:T.red,fontSize:12},nav:{height:58,flexDirection:'row',backgroundColor:'#fff',borderTopWidth:1,borderColor:T.line,alignItems:'center',justifyContent:'space-around'},navItem:{flex:1,alignItems:'center',padding:12},navLabel:{fontSize:10,fontWeight:'800',color:T.muted}});
